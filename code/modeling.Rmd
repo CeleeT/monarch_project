@@ -5,26 +5,152 @@ date: "2025-01-17"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+Packages
+```{r}
+#load relevant libraries
+x <- c("Matrix", "MASS", "plotrix", "lme4",  "lmerTest", "lmtest",
+       "TMB", "glmmTMB", "DHARMa", "sjPlot", "ggeffects", "performance",
+       "MuMIn", "emmeans", "tidyverse")
+lapply(x, library, character.only = TRUE)
+rm(x)
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+Data
+```{r}
+# Read in CSV
+df_final <- read_csv("../data/IMMP_MLMP_final.csv")
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+# Reset column types (must do this *EVERY TIME* you read in the file)
+df_final <- df_final %>%
+  mutate(monpresence = as.factor(monpresence),
+         mwspecies = as.factor(mwspecies),
+         siteid = as.factor(siteid),
+         year = as.numeric(year),
+         region = as.factor(region),
+         nativity = as.factor(nativity),
+         month = as.factor(month)
+         )
 
-```{r cars}
-summary(cars)
 ```
 
-## Including Plots
+DOING THIS FOR NOW BC IDK ITS NOT WORKING HELPPPPP
+```{r}
+df_2010sub <- read_csv("C:/Users/00dra/OneDrive/Desktop/FRSES Project/FRSES_Coding/FRSES_DATA/2010subset.csv")
 
-You can also embed plots, for example:
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+missing_from_ours <- anti_join(df_2010sub, df_final, by="visitid")
+missing_from_lauras <- anti_join(df_final, df_2010sub, by="visitid")
+
+df_2010sub$monpresence <- ifelse(df_2010sub$monarchcount > 0, 1, 0)
+
+# ADD MONTH --------------------------------------------------------------
+
+df_2010sub$date <- as.Date(df_2010sub$date)
+df_2010sub$month <- format(df_2010sub$date, "%m")
+
+
+
+# MAKE SURE VARS ARE CLASSIFIED CORRECTLY -----------------------------------
+df_2010sub$siteid <- as.factor(df_2010sub$siteid)
+df_2010sub$year <- as.numeric(df_2010sub$year)
+df_2010sub$monpresence <- as.factor(df_2010sub$monpresence) #binary/categorical
+df_2010sub$month <- as.factor(df_2010sub$month) #binary/categorical
+
+# ASSIGNING REGIONS -----------------------------------------------------------
+
+library(sf)
+
+# read in region shapefile
+cons_units <- st_read("../data/Monarch_Butterfly_US_Conservation_Units/Monarch_Butterfly_US_Conservation_Units.shp") 
+
+# recode name to larger regions 
+cons_units <- cons_units %>%  
+  mutate(region = case_when(    
+    str_starts(NAME, "North") ~ "north",        
+    str_starts(NAME, "South") ~ "south",        
+    str_starts(NAME, "West") ~ "west" )) %>% 
+  st_transform(4326) %>% 
+  dplyr::select(region)
+
+# convert merged dataset from df to sf
+sf_2010sub <- df_2010sub %>% 
+  filter(!is.na(longitude) & !is.na(latitude)) %>%  
+  st_as_sf(coords=c("longitude", "latitude"), crs=4326, remove = FALSE)
+
+# crs=4326 specifies the coordinate reference system
+
+# add region to sf
+sf_2010sub <- st_join(sf_2010sub, cons_units, left = TRUE)
+
+# convert sf back to df and drop missing regions 
+df_all <- st_drop_geometry(sf_2010sub) %>%   
+  filter(!is.na(region))
+
+
+# ADD NATIVITY ------------------------------------------------------------
+# classify species as native/non-native
+# define the list of species to assign 0 to
+non_native <- c(
+  "asclepias curassavica", 
+  "calotropis procera", 
+  "gomphocarpus fruticosus", 
+  "asclepias physocarpa", 
+  "calotropis gigantea"
+)
+
+# create 'nativity' column
+df_all$nativity <- ifelse(df_all$mwspecies %in% non_native, 0, 1)
+df_all$nativity <- as.factor(df_all$nativity) #make factor not numeric
+
+# FILTER MW SPECIES --------------------------------------------------------
+
+# Filter out milkweed species with fewer than 15 sites
+
+# Filter out mwspecies with fewer than 15 siteids
+df_all_filt <- df_all %>%
+  group_by(mwspecies) %>%
+  filter(n_distinct(siteid) >= 15) %>%
+  ungroup()
+
+# this filtering removes 4/5 non-native species, A. curassavica is left
+
+
+# Summarize the number of siteids and visitids for each mwspecies
+species_summary <- df_all_filt %>%
+  group_by(mwspecies) %>%
+  summarize(
+    num_siteids = n_distinct(siteid),
+    num_visitids = n_distinct(visitid)
+  ) %>%
+  arrange(desc(num_visitids))
+
+
+# FILTER OUT FLORIDA --------------------------------------------------------
+df_all_filt <- df_all_filt %>%
+  filter(state != "FL")
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+# "Top" Models 
+
+South Milkweed Nativity (native/non-native) model:
+```{r}
+# First, Filter data for South region:
+df_s <- df_all_filt %>% #df_final %>%
+  filter(region == "south")
+
+df_s <- df_s %>%
+  group_by(mwspecies) %>%
+  filter(n_distinct(siteid) >= 15) %>%
+  ungroup()
+
+
+model_nativity_s <- glmer(
+  monpresence ~ nativity + year + month + (1 | siteid), 
+  family = binomial(link = "logit"),
+  data = df_s, control = glmerControl(optimizer="bobyqa"))
+```
+

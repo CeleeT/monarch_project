@@ -59,14 +59,14 @@ df_all = st_drop_geometry(sf) %>%
 
 Filter out stuff
 ```{r}
-# keep only species with at least 30 observations
+# keep only species with at least 40 observations
 df_filtered <- df_all %>%
   group_by(mwspecies) %>%  
   filter(n() >= 40) %>% 
   ungroup() 
 
 # also drop extreme values
-df_filtered1 <- df_filtered %>% 
+df_filtered1 <- df_filtered %>%  
   filter(monarchcount < 1000) %>% 
   filter(mwcount< 10000)
 
@@ -83,14 +83,17 @@ df_filtered3 <- df_filtered2 %>%
 #Fiter out data before 2010
 df_filtered4 <- df_filtered3 %>%
   filter(year > 2009)
-  
+
+#Filter out this wild site
+df_filtered5 <- df_filtered4 %>% 
+  filter(siteid!=2222)
 ```
 
 
 Add some more variables: month, monpresence, nativity
 ```{r}
 # I wanna add #mwspecies and mwcount_tot in a given visi
-df_var <- df_filtered4 %>% 
+df_var <- df_filtered5 %>% 
   group_by(visitid) %>% 
   mutate(numspp = n_distinct(mwspecies)) %>% # numspp in a vist
   mutate(mwcount_tot = sum(mwcount)) %>%     # total mws in a visit
@@ -106,11 +109,11 @@ df_var3 <- df_var2 %>%
 
 # Define non-natives
 non_native <- c(
-  "asclepias curassavica", 
-  "calotropis procera", 
-  "gomphocarpus fruticosus", 
-  "asclepias physocarpa", 
-  "calotropis gigantea"
+  "Asclepias curassavica", 
+  "Calotropis procera", 
+  "Gomphocarpus fruticosus", 
+  "Asclepias physocarpa", 
+  "Calotropis gigantea"
 )
 
 # create 'nativity' column
@@ -119,14 +122,12 @@ df_var4 <- df_var3 %>%
 
 ```
 
-Finally, set column types 
+
+Save Final Dataset to Enviromnent:
 ```{r}
-df_final <- df_var4 %>%
-  mutate(monpresence = as.factor(monpresence),
-         mwspecies = as.factor(mwspecies),
-         siteid = as.factor(siteid),
-         year = as.numeric(year),
-         region = as.factor(region),
-         nativity = as.factor (nativity)
-         )
+df_final <- df_var4
+write_csv(df_final, "../data/IMMP_MLMP_final.csv")
 ```
+
+
+HIST

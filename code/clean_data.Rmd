@@ -1,0 +1,132 @@
+---
+title: "clean data"
+output: html_document
+date: "2025-01-17"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(sf)
+```
+
+Read data
+```{r}
+df_MLMP <- read_csv("../data/mlmp_data_summary.csv")
+df_IMMP <- read_csv("../data/immp_data_summary.csv")
+cons_units <- st_read("../data/Monarch_Butterfly_US_Conservation_Units/Monarch_Butterfly_US_Conservation_Units.shp") 
+```
+
+Combine IMMP and MLMP
+```{r}
+# convert col names to lower case
+names(df_IMMP) <- tolower(names(df_IMMP))
+names(df_MLMP) <- tolower(names(df_MLMP))
+
+# convert vars to character
+df_MLMP <- df_MLMP %>% mutate(visitid = as.character(visitid))
+df_IMMP <- df_IMMP %>% mutate(visitid = as.character(visitid))
+df_MLMP <- df_MLMP %>% mutate(siteid = as.character(siteid))
+df_IMMP <- df_IMMP %>% mutate(siteid = as.character(siteid))
+
+# combine datasets
+df <- bind_rows(df_MLMP, df_IMMP) 
+```
+
+
+Add region
+```{r}
+# recode name to larger regions 
+cons_units <- cons_units %>%
+  mutate(region = case_when(
+    str_starts(NAME, "North") ~ "north",     
+    str_starts(NAME, "South") ~ "south",     
+    str_starts(NAME, "West") ~ "west" )) %>%
+  st_transform(4326) %>%
+  dplyr::select(region)
+
+# convert merged dataset from df to sf
+sf = df %>%
+  filter(!is.na(longitude) & !is.na(latitude)) %>%    
+  st_as_sf(coords=c("longitude", "latitude"), crs=4326, remove = FALSE)
+
+# add region to sf
+sf = st_join(sf, cons_units, left = TRUE)
+
+# convert sf back to df and drop missing regions 
+df_all = st_drop_geometry(sf) %>% 
+  filter(!is.na(region))
+```
+
+Filter out stuff
+```{r}
+# keep only species with at least 30 observations
+df_filtered <- df_all %>%
+  group_by(mwspecies) %>%  
+  filter(n() >= 40) %>% 
+  ungroup() 
+
+# also drop extreme values
+df_filtered1 <- df_filtered %>% 
+  filter(monarchcount < 1000) %>% 
+  filter(mwcount< 10000)
+
+# Drop Florida
+df_filtered2 <- df_filtered1 %>%
+  filter(state != "FL")
+
+#Filter out milkweed spp. occurring in less than 15 sites for each region
+df_filtered3 <- df_filtered2 %>% 
+  group_by(mwspecies, region) %>%
+  filter(n_distinct(siteid) >= 15) %>%
+  ungroup()
+
+#Fiter out data before 2010
+df_filtered4 <- df_filtered3 %>%
+  filter(year > 2009)
+  
+```
+
+
+Add some more variables: month, monpresence, nativity
+```{r}
+# I wanna add #mwspecies and mwcount_tot in a given visi
+df_var <- df_filtered4 %>% 
+  group_by(visitid) %>% 
+  mutate(numspp = n_distinct(mwspecies)) %>% # numspp in a vist
+  mutate(mwcount_tot = sum(mwcount)) %>%     # total mws in a visit
+  ungroup() 
+
+# add month
+df_var2 <- df_var %>% 
+  mutate(month=month(date))
+
+# add monarch presence/absence
+df_var3 <- df_var2 %>% 
+  mutate(monpresence = if_else(monarchcount >0 , 1, 0))
+
+# Define non-natives
+non_native <- c(
+  "asclepias curassavica", 
+  "calotropis procera", 
+  "gomphocarpus fruticosus", 
+  "asclepias physocarpa", 
+  "calotropis gigantea"
+)
+
+# create 'nativity' column
+df_var4 <- df_var3 %>%
+    mutate(nativity = if_else(mwspecies %in% non_native, 0, 1))
+
+```
+
+Finally, set column types 
+```{r}
+df_final <- df_var4 %>%
+  mutate(monpresence = as.factor(monpresence),
+         mwspecies = as.factor(mwspecies),
+         siteid = as.factor(siteid),
+         year = as.numeric(year),
+         region = as.factor(region),
+         nativity = as.factor (nativity)
+         )
+```

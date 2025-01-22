@@ -7,13 +7,14 @@ date: "2025-01-17"
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(sf)
+library(here)
 ```
 
 Read data
 ```{r}
-df_MLMP <- read_csv("../data/mlmp_data_summary.csv")
-df_IMMP <- read_csv("../data/immp_data_summary.csv")
-cons_units <- st_read("../data/Monarch_Butterfly_US_Conservation_Units/Monarch_Butterfly_US_Conservation_Units.shp") 
+df_MLMP <- read_csv("data/mlmp_data_summary.csv")
+df_IMMP <- read_csv("data/immp_data_summary.csv")
+cons_units <- st_read("data/Monarch_Butterfly_US_Conservation_Units/Monarch_Butterfly_US_Conservation_Units.shp")
 ```
 
 Combine IMMP and MLMP
@@ -34,6 +35,7 @@ df <- bind_rows(df_MLMP, df_IMMP)
 
 
 Add region
+Note:several hundred obs are dropped bc their coordinates place them in a Great Lake - could look into assigning their regions manually at some point. 
 ```{r}
 # recode name to larger regions 
 cons_units <- cons_units %>%
@@ -59,41 +61,41 @@ df_all = st_drop_geometry(sf) %>%
 
 Filter out stuff
 ```{r}
-# keep only species with at least 40 observations
-df_filtered <- df_all %>%
-  group_by(mwspecies) %>%  
-  filter(n() >= 40) %>% 
-  ungroup() 
-
-# also drop extreme values
-df_filtered1 <- df_filtered %>%  
-  filter(monarchcount < 1000) %>% 
-  filter(mwcount< 10000)
+# Filter out data before 2010
+df_filtered1 <- df_all %>%
+  filter(year > 2009)
 
 # Drop Florida
 df_filtered2 <- df_filtered1 %>%
   filter(state != "FL")
 
-#Filter out milkweed spp. occurring in less than 15 sites for each region
-df_filtered3 <- df_filtered2 %>% 
+# Also drop extreme values
+df_filtered3 <- df_filtered2 %>%  
+  filter(monarchcount < 1000) %>% 
+  filter(mwcount< 10000)
+
+# Filter out this wild site
+df_filtered4 <- df_filtered3 %>% 
+  filter(siteid!=2222)
+
+# Keep only species with at least 40 observations
+df_filtered5 <- df_filtered4 %>%
+  group_by(mwspecies) %>%  
+  filter(n() >= 40) %>% 
+  ungroup() 
+
+# Filter out milkweed spp. occurring in less than 15 sites for each region
+df_filtered6 <- df_filtered5 %>% 
   group_by(mwspecies, region) %>%
   filter(n_distinct(siteid) >= 15) %>%
   ungroup()
-
-#Fiter out data before 2010
-df_filtered4 <- df_filtered3 %>%
-  filter(year > 2009)
-
-#Filter out this wild site
-df_filtered5 <- df_filtered4 %>% 
-  filter(siteid!=2222)
 ```
 
 
 Add some more variables: month, monpresence, nativity
 ```{r}
 # I wanna add #mwspecies and mwcount_tot in a given visi
-df_var <- df_filtered5 %>% 
+df_var <- df_filtered6 %>% 
   group_by(visitid) %>% 
   mutate(numspp = n_distinct(mwspecies)) %>% # numspp in a vist
   mutate(mwcount_tot = sum(mwcount)) %>%     # total mws in a visit
@@ -126,8 +128,5 @@ df_var4 <- df_var3 %>%
 Save Final Dataset to Enviromnent:
 ```{r}
 df_final <- df_var4
-write_csv(df_final, "../data/IMMP_MLMP_final.csv")
+write_csv(df_final, "data/IMMP_MLMP_final.csv")
 ```
-
-
-HIST

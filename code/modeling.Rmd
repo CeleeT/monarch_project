@@ -6,20 +6,20 @@ output: html_document
 ---
 
 Packages
+
 ```{r}
 #load relevant libraries
-x <- c("Matrix", "MASS", "plotrix", "lme4",  "lmerTest", "lmtest",
-       "TMB", "glmmTMB", "DHARMa", "sjPlot", "ggeffects", "performance",
-       "MuMIn", "emmeans", "tidyverse")
+x <- c("Matrix", "MASS", "plotrix", "lme4",  "lmerTest", "lmtest", "gridExtra",
+       "DHARMa", "sjPlot", "ggeffects", "performance", "MuMIn", "emmeans", "tidyverse")
 lapply(x, library, character.only = TRUE)
 rm(x)
 ```
 
-
 Data
+
 ```{r}
 # Read in CSV
-df_final <- read_csv("../data/IMMP_MLMP_final.csv")
+df_final <- read_csv("data/IMMP_MLMP_final.csv")
 
 # Reset column types (must do this *EVERY TIME* you read in the file)
 df_final <- df_final %>%
@@ -31,126 +31,234 @@ df_final <- df_final %>%
          nativity = as.factor(nativity),
          month = as.factor(month)
          )
-
 ```
 
-DOING THIS FOR NOW BC IDK ITS NOT WORKING HELPPPPP
+Break into regional datasets
+
 ```{r}
-df_2010sub <- read_csv("C:/Users/00dra/OneDrive/Desktop/FRSES Project/FRSES_Coding/FRSES_DATA/2010subset.csv")
-
-
-missing_from_ours <- anti_join(df_2010sub, df_final, by="visitid")
-missing_from_lauras <- anti_join(df_final, df_2010sub, by="visitid")
-
-df_2010sub$monpresence <- ifelse(df_2010sub$monarchcount > 0, 1, 0)
-
-# ADD MONTH --------------------------------------------------------------
-
-df_2010sub$date <- as.Date(df_2010sub$date)
-df_2010sub$month <- format(df_2010sub$date, "%m")
-
-
-
-# MAKE SURE VARS ARE CLASSIFIED CORRECTLY -----------------------------------
-df_2010sub$siteid <- as.factor(df_2010sub$siteid)
-df_2010sub$year <- as.numeric(df_2010sub$year)
-df_2010sub$monpresence <- as.factor(df_2010sub$monpresence) #binary/categorical
-df_2010sub$month <- as.factor(df_2010sub$month) #binary/categorical
-
-# ASSIGNING REGIONS -----------------------------------------------------------
-
-library(sf)
-
-# read in region shapefile
-cons_units <- st_read("../data/Monarch_Butterfly_US_Conservation_Units/Monarch_Butterfly_US_Conservation_Units.shp") 
-
-# recode name to larger regions 
-cons_units <- cons_units %>%  
-  mutate(region = case_when(    
-    str_starts(NAME, "North") ~ "north",        
-    str_starts(NAME, "South") ~ "south",        
-    str_starts(NAME, "West") ~ "west" )) %>% 
-  st_transform(4326) %>% 
-  dplyr::select(region)
-
-# convert merged dataset from df to sf
-sf_2010sub <- df_2010sub %>% 
-  filter(!is.na(longitude) & !is.na(latitude)) %>%  
-  st_as_sf(coords=c("longitude", "latitude"), crs=4326, remove = FALSE)
-
-# crs=4326 specifies the coordinate reference system
-
-# add region to sf
-sf_2010sub <- st_join(sf_2010sub, cons_units, left = TRUE)
-
-# convert sf back to df and drop missing regions 
-df_all <- st_drop_geometry(sf_2010sub) %>%   
-  filter(!is.na(region))
-
-
-# ADD NATIVITY ------------------------------------------------------------
-# classify species as native/non-native
-# define the list of species to assign 0 to
-non_native <- c(
-  "asclepias curassavica", 
-  "calotropis procera", 
-  "gomphocarpus fruticosus", 
-  "asclepias physocarpa", 
-  "calotropis gigantea"
-)
-
-# create 'nativity' column
-df_all$nativity <- ifelse(df_all$mwspecies %in% non_native, 0, 1)
-df_all$nativity <- as.factor(df_all$nativity) #make factor not numeric
-
-# FILTER MW SPECIES --------------------------------------------------------
-
-# Filter out milkweed species with fewer than 15 sites
-
-# Filter out mwspecies with fewer than 15 siteids
-df_all_filt <- df_all %>%
-  group_by(mwspecies) %>%
-  filter(n_distinct(siteid) >= 15) %>%
-  ungroup()
-
-# this filtering removes 4/5 non-native species, A. curassavica is left
-
-
-# Summarize the number of siteids and visitids for each mwspecies
-species_summary <- df_all_filt %>%
-  group_by(mwspecies) %>%
-  summarize(
-    num_siteids = n_distinct(siteid),
-    num_visitids = n_distinct(visitid)
-  ) %>%
-  arrange(desc(num_visitids))
-
-
-# FILTER OUT FLORIDA --------------------------------------------------------
-df_all_filt <- df_all_filt %>%
-  filter(state != "FL")
-
+df_south <- subset(df_final, region == "south")
+df_north <- subset(df_final, region == "north")
+df_west <- subset(df_final, region == "west")
 ```
 
+## Nativity model
 
+In the South, the nativity model does not converge when year is a fixed effect
 
-# "Top" Models 
-
-South Milkweed Nativity (native/non-native) model:
 ```{r}
-# First, Filter data for South region:
-df_s <- df_all_filt %>% #df_final %>%
-  filter(region == "south")
-
-df_s <- df_s %>%
-  group_by(mwspecies) %>%
-  filter(n_distinct(siteid) >= 15) %>%
-  ungroup()
-
-
-model_nativity_s <- glmer(
+# SOUTH 1: nativity + year + month + (1 | siteid) 
+# DOES NOT CONVERGE
+model_nativity_s1 <- glmer(
   monpresence ~ nativity + year + month + (1 | siteid), 
   family = binomial(link = "logit"),
-  data = df_s, control = glmerControl(optimizer="bobyqa"))
+  data = df_south, control = glmerControl(optimizer="bobyqa"))
+
+summary(model_nativity_s1) # AIC = 5711.8
+
+
+# SOUTH 2: try with year as random effect now 
+# CONVERGES
+model_nativity_s2 <- glmer(
+  monpresence ~ nativity + month + (1 | year) + (1 | siteid), 
+  family = binomial(link = "logit"),
+  data = df_south, control = glmerControl(optimizer="bobyqa",
+                                          optCtrl=list(maxfun=2500))) 
+
+summary(model_nativity_s2) # AIC = 5674.1
+
+
+# SOUTH 3: try with month as a random effect 
+# DOES NOT CONVERGE
+model_nativity_s3 <- glmer(
+  monpresence ~ nativity +  year + (1 | month) +  + (1 | siteid), 
+  family = binomial(link = "logit"),
+  data = df_south, control = glmerControl(optimizer="bobyqa"))
+
+summary(model_nativity_s3) # # AIC = 5730.5
+
+
+# *SOUTH 4: try with month AND year as a random effects
+# CONVERGES
+model_nativity_s4 <- glmer(
+  monpresence ~ nativity + (1 | month) + (1 | year) + (1 | siteid), 
+  family = binomial(link = "logit"),
+  data = df_south, control = glmerControl(optimizer="bobyqa"))
+
+summary(model_nativity_s4) # AIC = 5692.8
 ```
 
+Model 4 was best, for the south. Let's run it for north and west too.
+
+```{r}
+# north
+model_nativity_n4 <- glmer(
+  monpresence ~ nativity + (1 | month) + (1 | year) + (1 | siteid), 
+  family = binomial(link = "logit"),
+  data = df_north, control = glmerControl(optimizer="bobyqa"))
+
+# west
+model_nativity_w4 <- glmer(
+  monpresence ~ nativity + (1 | month) + (1 | year) + (1 | siteid), 
+  family = binomial(link = "logit"),
+  data = df_west, control = glmerControl(optimizer="bobyqa"))
+```
+
+Use emmeans to interpret results:
+
+```{r}
+# USE EMMEANS TO INTERPRET RESULTS
+emmeans(model_nativity_s4, pairwise ~ nativity, type = "response")
+emmeans(model_nativity_n4, pairwise ~ nativity, type = "response")
+emmeans(model_nativity_w4, pairwise ~ nativity, type = "response")
+```
+
+-   In the South, the probability for monarch presence is (0.18) on native and (0.65) on nonnative spp. Odds for non-natives having monarchs are 8.4 times higher than natives
+
+-   In the North, the odds radio is 1.6 and barely significant at 0.01
+
+-   In the West, the odds ratio is 4
+
+## Milkweed species model
+
+Again, the mwspecies model does not converge when year is a fixed effect (in the south). Month is insignificant and actually lowers AIC, whether used as a random or fixed effect.
+
+```{r}
+# SOUTH 1: species + year + (1 | siteid) 
+# DOES NOT CONVERGE
+model_mwspecies_s1 <- glmer(
+  monpresence ~ mwspecies + year + (1 | siteid), 
+  family = binomial(link = "logit"),
+  data = df_south, control = glmerControl(optimizer="bobyqa"))
+
+summary(model_mwspecies_s1) # AIC = 5702.1
+
+# SOUTH 2: now try year as random effect
+# CONVERGES
+model_mwspecies_s2 <- glmer(
+  monpresence ~ mwspecies + (1 | year) + (1 | siteid), 
+  family = binomial(link = "logit"),
+  data = df_south, control = glmerControl(optimizer="bobyqa"))
+
+summary(model_mwspecies_s2) # AIC = 5674.2
+
+# SOUTH 3: add month
+# CONVERGES
+model_mwspecies_s3 <- glmer(
+  monpresence ~ mwspecies + month + (1 | year) + (1 | siteid), 
+  family = binomial(link = "logit"),
+  data = df_south, control = glmerControl(optimizer="bobyqa"))
+
+summary(model_mwspecies_s3) # AIC = 5402.3
+
+# SOUTH 4: try month as a random effect
+# CONVERGES
+model_mwspecies_s4 <- glmer(
+  monpresence ~ mwspecies + (1 | month) + (1 | year) + (1 | siteid), 
+  family = binomial(link = "logit"),
+  data = df_south, control = glmerControl(optimizer="bobyqa"))
+
+summary(model_mwspecies_s4) # AIC = 5421.6
+```
+
+Model 2 was best, for the south. Let's run it for north and west too.
+
+```{r}
+# north
+model_mwspecies_n2 <- glmer(
+  monpresence ~ mwspecies + (1 | year) + (1 | siteid), 
+  family = binomial(link = "logit"),
+  data = df_north, control = glmerControl(optimizer="bobyqa"))
+
+# west
+model_mwspecies_w2 <- glmer(
+  monpresence ~ mwspecies + (1 | year) + (1 | siteid), 
+  family = binomial(link = "logit"),
+  data = df_west, control = glmerControl(optimizer="bobyqa"))
+```
+
+```{r}
+# USE EMMEANS TO INTERPRET RESULTS
+emmeans_mwsp_s <- emmeans(model_mwspecies_s2, pairwise ~ mwspecies, type = "response")
+emmeans_mwsp_n <- emmeans(model_mwspecies_n2, pairwise ~ mwspecies, type = "response")
+emmeans_mwsp_w <- emmeans(model_mwspecies_w2, pairwise ~ mwspecies, type = "response")
+```
+
+-   In the north, species like Asclepias curassavica and Asclepias syriaca have relatively high probabilities of monarch presence
+
+-   In the west, curassavica = high probability of monarch presence, followed by fascicularis
+
+Plot emmeans alltogether:
+
+```{r}
+emmeans_mwsp_s_df <- as.data.frame(emmeans_mwsp_s$emmeans) %>% mutate(region="south")
+emmeans_mwsp_w_df <- as.data.frame(emmeans_mwsp_w$emmeans) %>% mutate(region="west")
+emmeans_mwsp_n_df <- as.data.frame(emmeans_mwsp_n$emmeans) %>% mutate(region="north")
+emmmeans_mwsp_all <- bind_rows(emmeans_mwsp_s_df, emmeans_mwsp_w_df, emmeans_mwsp_n_df)
+
+# Create a unique list of x-axis labels
+x_labels <- levels(factor(emmmeans_mwsp_all$mwspecies))
+
+# Define color vector based on x-axis labels
+label_colors <- ifelse(x_labels == "Asclepias curassavica", "red", "black")
+
+# Set order of x-axis labels
+order <- emmmeans_mwsp_all %>%
+  group_by(mwspecies) %>%
+  summarize(mean_prob = mean(prob, na.rm = TRUE)) %>%
+  arrange(desc(mean_prob)) %>%
+  pull(mwspecies)
+
+# Plot with proper alignment of label colors
+emmmeans_mwsp_all %>%
+  mutate(mwspecies = factor(mwspecies, levels = order)) %>%
+  ggplot(aes(x = mwspecies, y = prob, color = region, ymin = asymp.LCL, ymax = asymp.UCL)) +
+  geom_point(size = 3) +
+  geom_errorbar(width = 0.2) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, color = label_colors)
+  )
+```
+
+Or plot emmeans separately...
+
+```{r}
+
+# Initialize an empty list to store the plots
+plot_list <- list()
+
+# List of your data frames
+emmeans_list <- list(emmeans_mwsp_s_df, emmeans_mwsp_w_df, emmeans_mwsp_n_df)
+
+# Loop through each data frame
+for(i in emmeans_list) {
+  
+  # Set order of x-axis labels
+  order <- i %>%
+    arrange(desc(prob)) %>%
+    pull(mwspecies)
+  
+  # Create a unique list of x-axis labels
+  x_labels <- levels(factor(i$mwspecies))
+  
+  # Create plot and add to the list
+  plot_list[[length(plot_list) + 1]] <- ggplot(i, aes(x = mwspecies,
+                                                      y = prob, 
+                                                      color = region, 
+                                                      ymin = asymp.LCL,
+                                                      ymax = asymp.UCL)) +
+    geom_point(size = 3) + 
+    geom_errorbar(width = 0.2) + 
+    theme_minimal(base_size = 14) + 
+    scale_color_manual(values = c("north" = "red", "south" = "green", "west" = "blue")) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+    ) +
+    scale_x_discrete(limits = order) +  
+    labs(title = paste("Region:", unique(i$region)))  
+}
+
+# Display the plots in a grid
+grid.arrange(grobs = plot_list, ncol = 3)
+```

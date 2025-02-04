@@ -155,12 +155,12 @@ p2
 ```
 
 ## Figure 3b 
-TOTAL Monarch Presence by Milkweed Spp and Region
+TOTAL Monarchs by Milkweed Spp and Region
 ```{r}
 # Calculate the average monarch presence per species per region
 monarch_presence_by_region <- df_final %>%
   group_by(region, mwspecies, nativity) %>%  # Group by region, species, and nativity
-  summarise(tot_presence = sum(monpresence, na.rm = TRUE), .groups = "drop")  # Compute average presence
+  summarise(tot_monarchs = sum(monarchcount, na.rm = TRUE), .groups = "drop")  # Compute average presence
 
 # Drop A. Sullivantii from south bc it's always absence=0: 
 monarch_presence_by_region <- monarch_presence_by_region %>% 
@@ -179,17 +179,17 @@ monarch_presence_by_region$species_type <- factor(monarch_presence_by_region$nat
 
 # Plot the results
 p2 <- ggplot(monarch_presence_by_region, 
-        aes(x = reorder_within(abbreviated_species, tot_presence, region), 
-           y = tot_presence, 
+        aes(x = reorder_within(abbreviated_species, tot_monarchs, region), 
+           y = tot_monarchs, 
            fill = species_type))  +
   geom_bar(stat = "identity", width = 0.7) +  # Use fill based on species type
   coord_flip() +
   #facet_wrap(~ region, scales = "free_y", ncol = 1) +  # Stack graphs vertically by setting ncol=1
   facet_grid(region ~ ., scales = "free_y", space = "free") + # makes the bar widths uniform, but titles are stuck to the side now...
   labs(
-    title = "Average Monarch Presence\nby Milkweed Species and Region",
+    title = "Total Monarchs by Milkweed Species and Region",
     x = "Milkweed Species",
-    y = "Total Monarch Presence"
+    y = "Total Monarch Count"
   ) +
   scale_fill_manual(values = c("#E69F00", "#56B4E9"),  # Set colors for Non-native and Native
                     labels = c("Non-native", "Native")) +  # Labels for the legend
@@ -315,7 +315,7 @@ seasonal_avg <- df_final %>%
   )) %>% 
   group_by(region, nativity, season) %>%
   # use sum instead of mean if you wanna look at total counts
-  summarise(avg_presence = sum(monpresence, na.rm = TRUE), .groups = "drop") %>%  
+  summarise(avg_presence = mean(monpresence, na.rm = TRUE), .groups = "drop") %>%  
   mutate(nativity = factor(nativity,
                            levels = c(0, 1),
                            labels = c("Non-native", "Native")))
@@ -331,7 +331,7 @@ ggplot(seasonal_avg, aes(x = season, y = avg_presence, fill = nativity)) +
   labs(
     title = "Seasonal Dynamics of Larvae Populations on Popular Milkweed Species",
     x = "Season",
-    y = "Total Monarch Presence"  
+    y = "Avg. Monarch Presence"  
     ) +
   theme(
     plot.title = element_text(size = 22, face = "bold", hjust = 1),       # Title size

@@ -247,7 +247,7 @@ p2 <- ggplot(monarch_presence_by_region,
   labs(
     title = "Total Monarchs per Plant, \n by Milkweed Species and Region",
     x = "Milkweed Species",
-    y = "Total Monarch Count per Plant"
+    y = "Monarch Density"
   ) +
   scale_fill_manual(values = c("#E69F00", "#56B4E9"),  # Set colors for Non-native and Native
                     labels = c("Non-native", "Native")) +  # Labels for the legend

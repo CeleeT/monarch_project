@@ -7,7 +7,6 @@ date: "2025-01-17"
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(sf)
-library(here)
 ```
 
 Read data
@@ -74,9 +73,10 @@ df_filtered3 <- df_filtered2 %>%
   filter(monarchcount < 1000) %>% 
   filter(mwcount< 10000)
 
-# Filter out this wild site
+# Filter out these wild sites (likely errors)
+# these had unrealistic monarch density records and/or duplicated records
 df_filtered4 <- df_filtered3 %>% 
-  filter(siteid!=2222)
+  filter(!(siteid %in% c("6328", "26745", "2222", "4313", "6073", "2783", "20929", "30904")))
 
 # Keep only species with at least 40 observations
 df_filtered5 <- df_filtered4 %>%
@@ -121,7 +121,6 @@ non_native <- c(
 # create 'nativity' column
 df_var4 <- df_var3 %>%
     mutate(nativity = if_else(mwspecies %in% non_native, 0, 1))
-
 ```
 
 

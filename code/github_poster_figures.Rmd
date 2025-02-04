@@ -1,0 +1,247 @@
+---
+title: "github_poster_figures"
+author: "C T"
+date: "2025-1-24"
+output: html_document
+---
+
+
+# PACKAGES ----------------------------------------------------------------
+
+```{r}
+library(lubridate)
+library(dplyr)
+library(purrr)
+library(tidyverse)
+library(knitr)
+library(sf)
+library(mapview)
+library(stringr)
+library(tidytext)
+```
+
+Set filepath to data folder
+```{r}
+# celee's
+# data_path <- "FRESES_DATA"
+
+# maggie's 
+data_path <- "data"
+```
+
+# DATA ---------------------------------------------------------------------
+
+```{r}
+# read in analysis-ready monarch dataset
+df_final <- read.csv(paste0(data_path, "/IMMP_MLMP_final.csv"))
+
+# read in region shapefile
+cons_units <- st_read(paste0(data_path, "/Monarch_Butterfly_US_Conservation_Units/Monarch_Butterfly_US_Conservation_Units.shp"))
+```
+
+
+# POSTER PLOTS/GRAPHS
+
+Super hacky shapefile of FL
+Note: I got this county shp from the Census TIGER site (it may be down now...) https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html 
+```{r}
+# read in shapefile of counties -> limit to FL
+fl <- read_sf(paste0(data_path, "/cb_2018_us_county_5m/cb_2018_us_county_5m.shp")) %>% 
+  filter(STATEFP == 12) %>%          # keep Florida
+  st_union() %>%                     # combine all the counties into 1 polygon
+  st_as_sf() %>%                     
+  st_transform(4326)                 # convert to WGS84
+
+# ok - that didn't quite get all of FL though. Manually modify the limits
+bbox["ymax"] <- 30.35  
+bbox["xmin"] <- -87.36
+bbox["ymin"] <- 24.5 
+bbox["xmax"] <- -80
+
+# Convert modified bbox to sf object
+bbox_sf <- st_as_sf(st_as_sfc(bbox), crs = st_crs(cons_units))
+
+# Add bbox to original FL outline
+fl_full <- st_union(fl, bbox_sf)
+```
+
+
+Map of site ID locations over our 3 regions
+```{r}
+#Format map data into our 3 desired regions (W,N,S)
+cons_units <- cons_units %>%
+  mutate(region = case_when(
+    str_starts(NAME, "North") ~ "north",     
+    str_starts(NAME, "South") ~ "south",   
+    str_starts(NAME, "West") ~ "west" )) %>%
+  st_transform(4326) 
+
+# consolidate sub-region polygons into regions
+cons_units <- cons_units %>%
+  group_by(region) %>% 
+  summarize(geometry = st_as_sf(st_union(geometry)))
+
+# drop FL from the cons_units map
+cons_units <- st_difference(cons_units, fl_full) 
+
+# Convert dataframe to shapefile and add region - NOTE: the 250 or so sites without coordinates were lost
+sf_all_region = df_final %>%
+  filter(!is.na(longitude) & !is.na(latitude)) %>%    
+  st_as_sf(coords=c("longitude", "latitude"), crs=4326, remove = FALSE) %>% 
+  st_join(cons_units_no_fl, left = TRUE) 
+
+# Create Map
+
+
+
+mapview(cons_units_no_fl, zcol = "region", legend = TRUE, layer.name = "Region") +  
+  mapview(sf_all_region, color = "#04033F", alpha = 1, cex = 7, legend = FALSE)
+```
+
+
+Avg. Monarch Presence by Milkweed Spp and Region
+```{r}
+# Calculate the average monarch presence per species per region
+monarch_presence_by_region <- df_final %>%
+  group_by(region, mwspecies, nativity) %>%  # Group by region, species, and nativity
+  summarise(avg_presence = mean(monpresence, na.rm = TRUE), .groups = "drop")  # Compute average presence
+
+# Drop A. Sullivantii from south bc it's always absence=0: 
+monarch_presence_by_region <- monarch_presence_by_region %>% 
+  filter(!(region=="south" & mwspecies == "Asclepias sullivantii"))
+
+# Abbreviate species names using scientific name format (Genus initial + species)
+monarch_presence_by_region <- monarch_presence_by_region %>%
+  mutate(abbreviated_species = str_replace_all(mwspecies, 
+                                               "^(\\w)\\w+ (\\w+)",  # Regex to match genus and species
+                                               "\\1. \\2"))  # Abbreviate to Genus initial. Species
+
+# Convert nativity to a factor with meaningful labels
+monarch_presence_by_region$species_type <- factor(monarch_presence_by_region$nativity,
+                                                  levels = c(0, 1),
+                                                  labels = c("Non-native", "Native"))
+
+# Plot the results
+p2 <- ggplot(monarch_presence_by_region, 
+        aes(x = reorder_within(abbreviated_species, avg_presence, region), 
+           y = avg_presence, 
+           fill = species_type))  +
+  geom_bar(stat = "identity", width = 0.7) +  # Use fill based on species type
+  coord_flip() +
+  #facet_wrap(~ region, scales = "free_y", ncol = 1) +  # Stack graphs vertically by setting ncol=1
+  facet_grid(region ~ ., scales = "free_y", space = "free") + # makes the bar widths uniform, but titles are stuck to the side now...
+  labs(
+    title = "Average Monarch Presence by Milkweed Species and Region",
+    x = "Milkweed Species",
+    y = "Avg. Monarch Presence"
+  ) +
+  scale_fill_manual(values = c("#E69F00", "#56B4E9"),  # Set colors for Non-native and Native
+                    labels = c("Non-native", "Native")) +  # Labels for the legend
+  guides(fill = guide_legend(title = NULL)) +  
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 25, face = "bold", hjust = 0.5),  # Title size and centered (hjust = 0.5)
+    axis.title = element_text(size = 25),       # Axis titles size
+    axis.text = element_text(size = 15),        # Axis labels size
+    axis.text.y = element_text(size = 15),      # Increase size of species names
+    strip.text = element_text(size = 25),       # Size for the region labels (facets)
+    legend.text = element_text(size = 20) ,     # Legend text size
+    legend.position = "bottom",                 # Moves the legend to the bottom
+    legend.direction = "horizontal",            # Arranges the legend items horizontally
+    panel.spacing = unit(1, "lines")            # Increase space between facets
+  ) + 
+  scale_x_reordered() # remove suffixes
+
+# print p2
+p2 
+```
+
+
+Seasonal Dynamics of Monarch Presence on the Top 5 Milkweed Species within each Region
+```{r}
+# Calculate `monthly_avg` by averaging monarch presence per species per month in each region
+monthly_avg <- df_final %>%
+  group_by(region, mwspecies, month) %>%
+  summarise(avg_presence = mean(monpresence, na.rm = TRUE), .groups = "drop")
+
+# List of top 5 species for each region
+n_species <- c("Asclepias syriaca", "Asclepias sullivantii", "Asclepias incarnata", "Asclepias exaltata", "Asclepias curassavica")
+s_species <- c("Asclepias tuberosa", "Asclepias syriaca", "Asclepias incarnata", "Asclepias curassavica", "Asclepias asperula")
+w_species <- c("Asclepias speciosa", "Asclepias fascicularis", "Asclepias eriocarpa", "Asclepias curassavica", "Asclepias cordifolia")
+
+# Combine all species
+all_species <- unique(c(n_species, s_species, w_species))
+
+# Filter the data for only the species you're interested in
+monthly_avg_filtered <- monthly_avg %>%
+  filter(mwspecies %in% all_species)
+
+# Add a new column for abbreviated species names
+monthly_avg_filtered <- monthly_avg_filtered %>%
+  mutate(
+    abbreviated_species = str_replace_all(mwspecies, 
+                                         "^(\\w)\\w+ (\\w+)",  # Regex to match genus and species
+                                         "\\1. \\2")  # Abbreviate to Genus initial. Species
+  )
+
+# Ensure Month is numeric (if it's not already)
+monthly_avg_filtered <- monthly_avg_filtered %>%
+  mutate(month = as.numeric(month))
+
+# Plot the average monarch presence by month
+ggplot(monthly_avg_filtered, aes(x = month, y = avg_presence, color = abbreviated_species)) +
+  geom_smooth(
+    method = "loess", 
+    se = TRUE, 
+    linewidth = 1,      # Adjust the line width of the smooth line
+    size = 0.5,         # Adjust the boundary size of the CI (makes it thinner)
+    fill = "lightgrey", # Change CI color
+    alpha = 0.3         # Adjust transparency of the CI (0 is fully transparent, 1 is fully opaque)
+  ) + 
+  scale_x_continuous(
+    breaks = 1:12, 
+    labels = substr(month.name, 1, 1)  # Use first letter of each month
+  ) +  # Set x-axis labels to the first letter of the month
+  scale_color_manual(
+    values = c(
+      # South (Vibrant Green)
+      "A. syriaca" = "#4D9B3B",  # vibrant green 
+      "A. sullivantii" = "#6BBF39", # bright green 
+      "A. incarnata" = "#A0D94A",  # yellowish green 
+      "A. curassavica" = "red",  # red for curassavica 
+      "A. exaltata" = "#99B85F",  # olive green
+     
+      # North (Purple)
+      "A. syriaca" = "#6A3D9C",  # deep purple
+      "A. incarnata" = "#9F61D3",  # lavender purple
+      "A. tuberosa" = "#9B6FCC",  # soft lavender
+      "A. asperula" = "#8B58B3",  # muted purple
+      
+      # West (Blue)
+      "A. fascicularis" = "#006DCC", # deep vibrant blue
+      "A. speciosa" = "#1E90FF",  # dodger blue
+      "A. eriocarpa" = "#4682B4",  # steel blue
+      "A. cordifolia" = "#5B8D9D"  # medium blue-gray
+    ),
+    name = "Milkweed Species"  # Legend title
+  ) +
+  labs(
+    title = "Seasonal Dynamics of Larvae Populations on Popular Milkweed Species",
+    x = "Month",
+    y = "Average Monarch Presence",
+    color = "Milkweed Species"
+  ) +
+  facet_wrap(~ region) +  # Add region as a facet to separate by region
+  theme_classic() +
+  theme(
+    plot.title = element_text(size = 22, face = "bold", hjust = 1),       # Title size
+    axis.title = element_text(size = 22),                      # Axis titles size
+    axis.text = element_text(size = 18),                       # Axis labels size
+    axis.text.x = element_text(size = 18),                     # Axis numbers size (increase text size for x-axis)
+    axis.text.y = element_text(size = 18),                     # Axis numbers size
+    legend.title = element_text(size = 20, face = "bold"),     # Legend title size
+    legend.text = element_text(size = 20),                     # Legend labels size
+    strip.text = element_text(size = 15, face = "bold")        # Region labels (facet labels) size and style
+  )
+
+```

@@ -187,9 +187,67 @@ p2 <- ggplot(monarch_presence_by_region,
   #facet_wrap(~ region, scales = "free_y", ncol = 1) +  # Stack graphs vertically by setting ncol=1
   facet_grid(region ~ ., scales = "free_y", space = "free") + # makes the bar widths uniform, but titles are stuck to the side now...
   labs(
-    title = "Total Monarchs by Milkweed Species and Region",
+    title = "Total Monarchs by Milkweed \n Species and Region",
     x = "Milkweed Species",
     y = "Total Monarch Count"
+  ) +
+  scale_fill_manual(values = c("#E69F00", "#56B4E9"),  # Set colors for Non-native and Native
+                    labels = c("Non-native", "Native")) +  # Labels for the legend
+  guides(fill = guide_legend(title = NULL)) +  
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 25, face = "bold", hjust = 0.5),  # Title size and centered (hjust = 0.5)
+    axis.title = element_text(size = 25),       # Axis titles size
+    axis.text = element_text(size = 15),        # Axis labels size
+    axis.text.y = element_text(size = 15),      # Increase size of species names
+    strip.text = element_text(size = 25),       # Size for the region labels (facets)
+    legend.text = element_text(size = 20) ,     # Legend text size
+    legend.position = "bottom",                 # Moves the legend to the bottom
+    legend.direction = "horizontal",            # Arranges the legend items horizontally
+    panel.spacing = unit(1, "lines")            # Increase space between facets
+  ) + 
+  scale_x_reordered() # remove suffixes
+
+# print p2
+p2 
+```
+
+## Figure 3c
+TOTAL Monarchs / TOTAL Milkweed Plants -  by Milkweed Spp and Region
+```{r}
+# Calculate the average monarch presence per species per region
+monarch_presence_by_region <- df_final %>%
+  group_by(region, mwspecies, nativity) %>%  # Group by region, species, and nativity
+  summarise(tot_monarchs = sum(monarchcount)/sum(mwcount), na.rm = TRUE, .groups = "drop")  # Compute average presence
+
+# Drop A. Sullivantii from south bc it's always absence=0: 
+monarch_presence_by_region <- monarch_presence_by_region %>% 
+  filter(!(region=="south" & mwspecies == "Asclepias sullivantii"))
+
+# Abbreviate species names using scientific name format (Genus initial + species)
+monarch_presence_by_region <- monarch_presence_by_region %>%
+  mutate(abbreviated_species = str_replace_all(mwspecies, 
+                                               "^(\\w)\\w+ (\\w+)",  # Regex to match genus and species
+                                               "\\1. \\2"))  # Abbreviate to Genus initial. Species
+
+# Convert nativity to a factor with meaningful labels
+monarch_presence_by_region$species_type <- factor(monarch_presence_by_region$nativity,
+                                                  levels = c(0, 1),
+                                                  labels = c("Non-native", "Native"))
+
+# Plot the results
+p2 <- ggplot(monarch_presence_by_region, 
+        aes(x = reorder_within(abbreviated_species, tot_monarchs, region), 
+           y = tot_monarchs, 
+           fill = species_type))  +
+  geom_bar(stat = "identity", width = 0.7) +  # Use fill based on species type
+  coord_flip() +
+  #facet_wrap(~ region, scales = "free_y", ncol = 1) +  # Stack graphs vertically by setting ncol=1
+  facet_grid(region ~ ., scales = "free_y", space = "free") + # makes the bar widths uniform, but titles are stuck to the side now...
+  labs(
+    title = "Total Monarchs per Plant, \n by Milkweed Species and Region",
+    x = "Milkweed Species",
+    y = "Total Monarch Count per Plant"
   ) +
   scale_fill_manual(values = c("#E69F00", "#56B4E9"),  # Set colors for Non-native and Native
                     labels = c("Non-native", "Native")) +  # Labels for the legend
@@ -345,3 +403,5 @@ ggplot(seasonal_avg, aes(x = season, y = avg_presence, fill = nativity)) +
   )
 
 ```
+
+

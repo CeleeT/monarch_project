@@ -42,6 +42,7 @@ cons_units <- st_read(paste0(data_path, "/Monarch_Butterfly_US_Conservation_Unit
 
 # POSTER PLOTS/GRAPHS
 
+## Figure 2
 Super hacky shapefile of FL
 Note: I got this county shp from the Census TIGER site (it may be down now...) https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html 
 ```{r}
@@ -91,14 +92,11 @@ sf_all_region = df_final %>%
   st_join(cons_units_no_fl, left = TRUE) 
 
 # Create Map
-
-
-
 mapview(cons_units_no_fl, zcol = "region", legend = TRUE, layer.name = "Region") +  
-  mapview(sf_all_region, color = "#04033F", alpha = 1, cex = 7, legend = FALSE)
+  mapview(sf_all_region, color = "#04033F", alpha = 1, cex = 3, legend = FALSE)
 ```
 
-
+## Figure 3
 Avg. Monarch Presence by Milkweed Spp and Region
 ```{r}
 # Calculate the average monarch presence per species per region
@@ -156,7 +154,65 @@ p2 <- ggplot(monarch_presence_by_region,
 p2 
 ```
 
+## Figure 3b 
+TOTAL Monarch Presence by Milkweed Spp and Region
+```{r}
+# Calculate the average monarch presence per species per region
+monarch_presence_by_region <- df_final %>%
+  group_by(region, mwspecies, nativity) %>%  # Group by region, species, and nativity
+  summarise(tot_presence = sum(monpresence, na.rm = TRUE), .groups = "drop")  # Compute average presence
 
+# Drop A. Sullivantii from south bc it's always absence=0: 
+monarch_presence_by_region <- monarch_presence_by_region %>% 
+  filter(!(region=="south" & mwspecies == "Asclepias sullivantii"))
+
+# Abbreviate species names using scientific name format (Genus initial + species)
+monarch_presence_by_region <- monarch_presence_by_region %>%
+  mutate(abbreviated_species = str_replace_all(mwspecies, 
+                                               "^(\\w)\\w+ (\\w+)",  # Regex to match genus and species
+                                               "\\1. \\2"))  # Abbreviate to Genus initial. Species
+
+# Convert nativity to a factor with meaningful labels
+monarch_presence_by_region$species_type <- factor(monarch_presence_by_region$nativity,
+                                                  levels = c(0, 1),
+                                                  labels = c("Non-native", "Native"))
+
+# Plot the results
+p2 <- ggplot(monarch_presence_by_region, 
+        aes(x = reorder_within(abbreviated_species, tot_presence, region), 
+           y = tot_presence, 
+           fill = species_type))  +
+  geom_bar(stat = "identity", width = 0.7) +  # Use fill based on species type
+  coord_flip() +
+  #facet_wrap(~ region, scales = "free_y", ncol = 1) +  # Stack graphs vertically by setting ncol=1
+  facet_grid(region ~ ., scales = "free_y", space = "free") + # makes the bar widths uniform, but titles are stuck to the side now...
+  labs(
+    title = "Average Monarch Presence\nby Milkweed Species and Region",
+    x = "Milkweed Species",
+    y = "Total Monarch Presence"
+  ) +
+  scale_fill_manual(values = c("#E69F00", "#56B4E9"),  # Set colors for Non-native and Native
+                    labels = c("Non-native", "Native")) +  # Labels for the legend
+  guides(fill = guide_legend(title = NULL)) +  
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 25, face = "bold", hjust = 0.5),  # Title size and centered (hjust = 0.5)
+    axis.title = element_text(size = 25),       # Axis titles size
+    axis.text = element_text(size = 15),        # Axis labels size
+    axis.text.y = element_text(size = 15),      # Increase size of species names
+    strip.text = element_text(size = 25),       # Size for the region labels (facets)
+    legend.text = element_text(size = 20) ,     # Legend text size
+    legend.position = "bottom",                 # Moves the legend to the bottom
+    legend.direction = "horizontal",            # Arranges the legend items horizontally
+    panel.spacing = unit(1, "lines")            # Increase space between facets
+  ) + 
+  scale_x_reordered() # remove suffixes
+
+# print p2
+p2 
+```
+
+## Figure 4a
 Seasonal Dynamics of Monarch Presence on the Top 5 Milkweed Species within each Region
 ```{r}
 # Calculate `monthly_avg` by averaging monarch presence per species per month in each region
@@ -233,6 +289,50 @@ ggplot(monthly_avg_filtered, aes(x = month, y = avg_presence, color = abbreviate
   ) +
   facet_wrap(~ region) +  # Add region as a facet to separate by region
   theme_classic() +
+  theme(
+    plot.title = element_text(size = 22, face = "bold", hjust = 1),       # Title size
+    axis.title = element_text(size = 22),                      # Axis titles size
+    axis.text = element_text(size = 18),                       # Axis labels size
+    axis.text.x = element_text(size = 18),                     # Axis numbers size (increase text size for x-axis)
+    axis.text.y = element_text(size = 18),                     # Axis numbers size
+    legend.title = element_text(size = 20, face = "bold"),     # Legend title size
+    legend.text = element_text(size = 20),                     # Legend labels size
+    strip.text = element_text(size = 15, face = "bold")        # Region labels (facet labels) size and style
+  )
+
+```
+
+## Figure 4b
+Seasonal Dynamics of Monarch Presence on the Top 5 Milkweed Species within each Region - BAR PLOT
+```{r}
+# Calculate `monthlyseasonal_avg_avg` by averaging monarch presence per species per SEASON in each region
+seasonal_avg <- df_final %>%
+  mutate(season = case_when(
+    julday >= 355 | julday < 80 ~ "winter",
+    julday >= 80 & julday < 172 ~ "spring",
+    julday >= 172 & julday < 265 ~ "summer",
+    julday >= 265 & julday < 355 ~ "fall"
+  )) %>% 
+  group_by(region, nativity, season) %>%
+  # use sum instead of mean if you wanna look at total counts
+  summarise(avg_presence = sum(monpresence, na.rm = TRUE), .groups = "drop") %>%  
+  mutate(nativity = factor(nativity,
+                           levels = c(0, 1),
+                           labels = c("Non-native", "Native")))
+
+# Plot the average monarch presence by month
+ggplot(seasonal_avg, aes(x = season, y = avg_presence, fill = nativity)) +
+  geom_bar(stat="identity", position="dodge")  +
+  facet_wrap(~ region) + 
+  scale_fill_manual(values = c("#E69F00", "#56B4E9"),  # Set colors for Non-native and Native
+                    labels = c("Non-native", "Native")) +  # Labels for the legend
+  guides(fill = guide_legend(title = NULL)) +  
+  theme_minimal() +
+  labs(
+    title = "Seasonal Dynamics of Larvae Populations on Popular Milkweed Species",
+    x = "Season",
+    y = "Total Monarch Presence"  
+    ) +
   theme(
     plot.title = element_text(size = 22, face = "bold", hjust = 1),       # Title size
     axis.title = element_text(size = 22),                      # Axis titles size

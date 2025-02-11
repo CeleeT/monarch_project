@@ -10,7 +10,7 @@ Packages
 ```{r}
 #load relevant libraries
 x <- c("Matrix", "MASS", "plotrix", "lme4",  "lmerTest", "lmtest", "gridExtra",
-       "DHARMa", "sjPlot", "ggeffects", "performance", "MuMIn", "emmeans", "tidyverse")
+       "DHARMa", "sjPlot", "ggeffects", "performance", "MuMIn", "emmeans", "tidyverse", "grid")
 lapply(x, library, character.only = TRUE)
 rm(x)
 ```
@@ -19,7 +19,7 @@ Data
 
 ```{r}
 # Read in CSV
-df_final <- read_csv("data/IMMP_MLMP_final.csv")
+df_final <- read_csv("../data/IMMP_MLMP_final.csv")
 
 # Reset column types (must do this *EVERY TIME* you read in the file)
 df_final <- df_final %>%
@@ -30,8 +30,19 @@ df_final <- df_final %>%
          region = as.factor(region),
          nativity = as.factor(nativity),
          month = as.factor(month)
-         )
+         ) 
+
+# (for figures later) add a new column for abbreviated species names
+df_final <- df_final %>%
+  mutate(
+    abb_spp = str_replace_all(mwspecies, 
+                                         "^(\\w)\\w+ (\\w+)",  # Regex to match genus and species
+                                         "\\1. \\2")  # Abbreviate to Genus initial. Species
+  )
+
 ```
+
+
 
 Break into regional datasets
 
@@ -41,7 +52,25 @@ df_north <- subset(df_final, region == "north")
 df_west <- subset(df_final, region == "west")
 ```
 
-## Nativity model
+## General Summary stats
+
+count the number of species and surveys we examined in our filtered dataset
+```{r}
+# number of milkweed species
+num_species <- n_distinct(df_final$abb_spp)
+# number of surveys
+num_visits <- n_distinct(df_final$visitid)
+
+# print results
+cat("Number of species:", num_species, "\n")
+cat("Number of surveys:", num_visits, "\n")
+```
+
+
+
+
+
+## Nativity models
 
 In the South, the nativity model does not converge when year is a fixed effect
 
@@ -112,11 +141,102 @@ emmeans(model_nativity_n4, pairwise ~ nativity, type = "response")
 emmeans(model_nativity_w4, pairwise ~ nativity, type = "response")
 ```
 
--   In the South, the probability for monarch presence is (0.18) on native and (0.65) on nonnative spp. Odds for non-natives having monarchs are 8.4 times higher than natives
+-   In the South, the probability for monarch presence is (0.18) on native and (0.64) on nonnative spp. Odds for non-natives having monarchs are 8.3 times higher than natives; p-value = <0.0001
 
--   In the North, the odds radio is 1.6 and barely significant at 0.01
+-   In the North, the odds radio is 1.6; p value = 0.0188
 
--   In the West, the odds ratio is 4
+-   In the West, the odds ratio is 3.9; p value =  <0.0001
+
+
+(poster figure 6) Graph ALL nativity emmeans results (best N, S, W models) into a nice figure
+```{r}
+#  create objects for eemeans from each model
+   # west:
+  emmeans_natvity_w4 <- emmeans(model_nativity_w4, pairwise ~ nativity, type = "response")
+    # south
+  emmeans_nativity_s4 <- emmeans(model_nativity_s4, pairwise ~ nativity, type = "response")
+    # north
+  emmeans_nativity_n4 <- emmeans(model_nativity_n4, pairwise ~ nativity, type = "response")
+
+# Convert to dataframes
+    #South
+s_nativity_emmeans <- as.data.frame(emmeans_nativity_s4)
+s_nativity_emmeans$region <- "south"
+    # west
+w_nativity_emmeans <- as.data.frame(emmeans_natvity_w4)
+w_nativity_emmeans$region <- "west"
+    # north
+n_nativity_emmeans <- as.data.frame(emmeans_nativity_n4)
+n_nativity_emmeans$region <- "north"
+ 
+
+# make x-axis display "Native" and "Non-native" instead of "0" and "1" for each region
+n_nativity_emmeans$nativity <- factor(n_nativity_emmeans$nativity,
+                                        levels = c(0, 1), 
+                                        labels = c("Non-native", "Native"))
+s_nativity_emmeans$nativity <- factor(s_nativity_emmeans$nativity,
+                                        levels = c(0, 1), 
+                                        labels = c("Non-native", "Native"))
+
+w_nativity_emmeans$nativity <- factor(w_nativity_emmeans$nativity,
+                                        levels = c(0, 1), 
+                                        labels = c("Non-native", "Native"))
+# Remove rows where nativity is NA for each region
+n_nativity_emmeans <- n_nativity_emmeans %>% filter(!is.na(nativity))
+s_nativity_emmeans <- s_nativity_emmeans %>% filter(!is.na(nativity))
+w_nativity_emmeans <- w_nativity_emmeans %>% filter(!is.na(nativity))
+
+
+# Initialize an empty list to store the plots
+plot_list <- list()
+
+# List of your data frames
+emmeans_list <- list(n_nativity_emmeans, s_nativity_emmeans, w_nativity_emmeans)
+
+# Loop through each data frame
+for(i in emmeans_list) {
+  
+  # Set order of x-axis labels
+  order <- i %>%
+    arrange(desc(prob)) %>%
+    pull(nativity)
+  
+  # Create a unique list of x-axis labels
+  x_labels <- levels(factor(i$nativity))
+  
+  # Create plot and add to the list
+  plot_list[[length(plot_list) + 1]] <- ggplot(i, aes(x = nativity,
+                                                      y = prob, 
+                                                      color = region, 
+                                                      ymin = asymp.LCL,
+                                                      ymax = asymp.UCL)) +
+    geom_point(size = 7) + 
+    geom_errorbar(width = 0.4, size = 2) + 
+    theme_minimal(base_size = 30) + 
+    scale_color_manual(values = c("north" = "#0072B2", "south" = "#E69F00", "west" = "#009E73")) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      axis.title = element_blank(),     ## MAGGIE DID THIs
+      legend.position = "none",
+      plot.margin = margin(20,10,10,60),
+      plot.background = element_rect(fill = "#FFF5E1"),  # background for the whole plot
+      axis.line = element_line(color = "black", size = 1)
+    ) +
+    scale_x_discrete(limits = order) +  
+    scale_y_continuous(limits = c(0,1), breaks=c(0,1)) + ## MAGGIE DID THIs
+    labs(subtitle = paste("Region:", unique(i$region)))  
+}
+
+# Display the plots in a grid
+grid.arrange(
+  grobs = plot_list,
+  ncol = 3,
+  top = textGrob("Modeled Probability of Monarch Presense by Natvity and Region", gp = gpar(fontsize = 28, fontface = "bold"))
+  )
+```
+
+
+
 
 ## Milkweed species model
 
@@ -135,7 +255,7 @@ summary(model_mwspecies_s1) # AIC = 5702.1
 # SOUTH 2: now try year as random effect
 # CONVERGES
 model_mwspecies_s2 <- glmer(
-  monpresence ~ mwspecies + (1 | year) + (1 | siteid), 
+  monpresence ~ abb_spp + (1 | year) + (1 | siteid), 
   family = binomial(link = "logit"),
   data = df_south, control = glmerControl(optimizer="bobyqa"))
 
@@ -160,75 +280,64 @@ model_mwspecies_s4 <- glmer(
 summary(model_mwspecies_s4) # AIC = 5421.6
 ```
 
+
 Model 2 was best, for the south. Let's run it for north and west too.
 
 ```{r}
 # north
 model_mwspecies_n2 <- glmer(
-  monpresence ~ mwspecies + (1 | year) + (1 | siteid), 
+  monpresence ~ abb_spp + (1 | year) + (1 | siteid), 
   family = binomial(link = "logit"),
   data = df_north, control = glmerControl(optimizer="bobyqa"))
 
 # west
 model_mwspecies_w2 <- glmer(
-  monpresence ~ mwspecies + (1 | year) + (1 | siteid), 
+  monpresence ~ abb_spp + (1 | year) + (1 | siteid), 
   family = binomial(link = "logit"),
   data = df_west, control = glmerControl(optimizer="bobyqa"))
 ```
 
 ```{r}
 # USE EMMEANS TO INTERPRET RESULTS
-emmeans_mwsp_s <- emmeans(model_mwspecies_s2, pairwise ~ mwspecies, type = "response")
-emmeans_mwsp_n <- emmeans(model_mwspecies_n2, pairwise ~ mwspecies, type = "response")
-emmeans_mwsp_w <- emmeans(model_mwspecies_w2, pairwise ~ mwspecies, type = "response")
+emmeans(model_mwspecies_s2, pairwise ~ abb_spp, type = "response")
+emmeans(model_mwspecies_n2, pairwise ~ abb_spp, type = "response")
+emmeans(model_mwspecies_w2, pairwise ~ abb_spp, type = "response")
 ```
+Results: 
 
 -   In the north, species like Asclepias curassavica and Asclepias syriaca have relatively high probabilities of monarch presence
 
 -   In the west, curassavica = high probability of monarch presence, followed by fascicularis
 
-Plot emmeans alltogether:
+- p values:
+ ---> north:
+        A currasavica = 0.0187
+        A. incarnata = 0.6867 
+  ---> south =
+        A. curaasavica = 0.0002
+        A. incarnata = 0.0452
+  ---> west =
+      A. currasavica =  <.0001
+      A. eriocarpa = 0.0157
+
 
 ```{r}
-emmeans_mwsp_s_df <- as.data.frame(emmeans_mwsp_s$emmeans) %>% mutate(region="south")
-emmeans_mwsp_w_df <- as.data.frame(emmeans_mwsp_w$emmeans) %>% mutate(region="west")
-emmeans_mwsp_n_df <- as.data.frame(emmeans_mwsp_n$emmeans) %>% mutate(region="north")
-emmmeans_mwsp_all <- bind_rows(emmeans_mwsp_s_df, emmeans_mwsp_w_df, emmeans_mwsp_n_df)
-
-# Create a unique list of x-axis labels
-x_labels <- levels(factor(emmmeans_mwsp_all$mwspecies))
-
-# Define color vector based on x-axis labels
-label_colors <- ifelse(x_labels == "Asclepias curassavica", "red", "black")
-
-# Set order of x-axis labels
-order <- emmmeans_mwsp_all %>%
-  group_by(mwspecies) %>%
-  summarize(mean_prob = mean(prob, na.rm = TRUE)) %>%
-  arrange(desc(mean_prob)) %>%
-  pull(mwspecies)
-
-# Plot with proper alignment of label colors
-emmmeans_mwsp_all %>%
-  mutate(mwspecies = factor(mwspecies, levels = order)) %>%
-  ggplot(aes(x = mwspecies, y = prob, color = region, ymin = asymp.LCL, ymax = asymp.UCL)) +
-  geom_point(size = 3) +
-  geom_errorbar(width = 0.2) +
-  theme_minimal(base_size = 14) +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1, color = label_colors)
-  )
+# Make species emmeans dataframes
+emmeans_mwsp_s <- emmeans(model_mwspecies_s2, pairwise ~ abb_spp, type = "response")
+emmeans_mwsp_n <- emmeans(model_mwspecies_n2, pairwise ~ abb_spp, type = "response")
+emmeans_mwsp_w <- emmeans(model_mwspecies_w2, pairwise ~ abb_spp, type = "response")
 ```
 
-Or plot emmeans separately...
 
+
+(Poster figure 5) plot all milkweed species emmeans (N,S,W) into a nice figure ...
 ```{r}
 
 # Initialize an empty list to store the plots
 plot_list <- list()
 
 # List of your data frames
-emmeans_list <- list(emmeans_mwsp_s_df, emmeans_mwsp_w_df, emmeans_mwsp_n_df)
+emmeans_list <- list(emmeans_mwsp_n_df, emmeans_mwsp_s_df, emmeans_mwsp_w_df)
 
 # Loop through each data frame
 for(i in emmeans_list) {
@@ -236,29 +345,207 @@ for(i in emmeans_list) {
   # Set order of x-axis labels
   order <- i %>%
     arrange(desc(prob)) %>%
-    pull(mwspecies)
+    pull(abb_spp)
   
   # Create a unique list of x-axis labels
-  x_labels <- levels(factor(i$mwspecies))
+  x_labels <- levels(factor(i$abb_spp))
   
   # Create plot and add to the list
-  plot_list[[length(plot_list) + 1]] <- ggplot(i, aes(x = mwspecies,
+  plot_list[[length(plot_list) + 1]] <- ggplot(i, aes(x = abb_spp,
                                                       y = prob, 
                                                       color = region, 
                                                       ymin = asymp.LCL,
                                                       ymax = asymp.UCL)) +
-    geom_point(size = 3) + 
-    geom_errorbar(width = 0.2) + 
-    theme_minimal(base_size = 14) + 
-    scale_color_manual(values = c("north" = "red", "south" = "green", "west" = "blue")) +
+    geom_point(size = 7) + 
+    geom_errorbar(width = 0.4, size = 2) + 
+    theme_minimal(base_size = 30) + 
+    scale_color_manual(values = c("north" = "#0072B2", "south" = "#E69F00", "west" = "#009E73")) +
     theme(
       axis.text.x = element_text(angle = 45, hjust = 1),
-      legend.position = "none"
+      axis.title = element_blank(),     ## MAGGIE DID THIs
+      legend.position = "none",
+      plot.margin = margin(20,10,10,70),
+      plot.background = element_rect(fill = "#FFF5E1"),  # background for the whole plot
+      panel.border = element_blank(),   # Remove panel borders
+      axis.line = element_line(color = "black", size = 1)
     ) +
     scale_x_discrete(limits = order) +  
-    labs(title = paste("Region:", unique(i$region)))  
+    scale_y_continuous(limits = c(0,1), breaks=c(0,1)) + ## MAGGIE DID THIs
+    labs(subtitle = paste("Region:", unique(i$region)))  
 }
 
 # Display the plots in a grid
-grid.arrange(grobs = plot_list, ncol = 3)
+grid.arrange(
+  grobs = plot_list,
+  ncol = 3,
+  top = textGrob("Modeled Probability of Monarch Presense by Species and Region", gp = gpar(fontsize = 28, fontface = "bold"))
+  )
 ```
+
+Plot milkweed species emmeans alltogether (NOT by region):
+```{r}
+emmeans_mwsp_s_df <- as.data.frame(emmeans_mwsp_s$emmeans) %>% mutate(region="south")
+emmeans_mwsp_w_df <- as.data.frame(emmeans_mwsp_w$emmeans) %>% mutate(region="west")
+emmeans_mwsp_n_df <- as.data.frame(emmeans_mwsp_n$emmeans) %>% mutate(region="north")
+emmmeans_mwsp_all <- bind_rows(emmeans_mwsp_s_df, emmeans_mwsp_w_df, emmeans_mwsp_n_df)
+
+# Create a unique list of x-axis labels
+x_labels <- levels(factor(emmmeans_mwsp_all$abb_spp))
+
+# Define color vector based on x-axis labels
+label_colors <- ifelse(x_labels == "Asclepias curassavica", "darkred", "darkgreen")
+
+# Set order of x-axis labels
+order <- emmmeans_mwsp_all %>%
+  group_by(abb_spp) %>%
+  summarize(mean_prob = mean(prob, na.rm = TRUE)) %>%
+  arrange(desc(mean_prob)) %>%
+  pull(abb_spp)
+
+# Plot with proper alignment of label colors
+emmmeans_mwsp_all %>%
+  mutate(abb_spp = factor(abb_spp, levels = order)) %>%
+  ggplot(aes(x = abb_spp, y = prob, color = region, ymin = asymp.LCL, ymax = asymp.UCL)) +
+  geom_point(size = 3) +
+  geom_errorbar(width = 0.2) +
+  theme_minimal(base_size = 30) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, color = label_colors)
+  ) +
+  labs(title = "Modelled Probability of Monarch Presence")
+```
+
+
+
+
+
+#----------------------------------------------------------------------------------------
+# UNIQUE SITEIDS  & VISIT IDS PER REGION -----------------------------------------------------------
+#----------------------------------------------------------------------------------------
+
+# **SOUTH**
+```{r}
+sites_sp_s <- df_south %>%
+  group_by(mwspecies) %>%
+  summarise(
+    unique_siteids = n_distinct(siteid),
+    unique_visitids = n_distinct(visitid),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(unique_siteids)) 
+
+print(sites_sp_s)
+```
+
+#sites
+```{r}
+ggplot(sites_sp_s, aes(x = reorder(mwspecies, unique_siteids), y = unique_siteids)) +
+  geom_bar(stat = "identity", fill = "green") +
+  coord_flip() +  # Flip coordinates for better readability
+  labs(
+    title = "SOUTH - SITES",
+    x = "Milkweed Species",
+    y = "# Unique Sites"
+  ) +
+  theme_minimal()
+```
+
+
+# visits
+```{r}
+ggplot(sites_sp_s, aes(x = reorder(mwspecies, unique_visitids), y = unique_visitids)) +
+  geom_bar(stat = "identity", fill = "green") +
+  coord_flip() +  # Flip coordinates for better readability
+  labs(
+    title = "SOUTH - SURVEYS",
+    x = "Milkweed Species",
+    y = "Number of Visits/Surveys"
+  ) +
+  theme_minimal()
+```
+
+
+# _____
+# **NORTH** 
+```{r}
+sites_sp_n <- df_north %>%
+  group_by(mwspecies) %>%
+  summarise(
+    unique_siteids = n_distinct(siteid),
+    unique_visitids = n_distinct(visitid),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(unique_siteids)) 
+
+print(sites_sp_n)
+```
+
+#sites
+```{r}
+ggplot(sites_sp_n, aes(x = reorder(mwspecies, unique_siteids), y = unique_siteids)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +  # Flip coordinates for better readability
+  labs(
+    title = "NORTH - SITES",
+    x = "Milkweed Species",
+    y = "# Unique Sites"
+  ) +
+  theme_minimal()
+```
+
+# visits
+```{r}
+ggplot(visitid_counts_n, aes(x = reorder(mwspecies, total_visitids), y = total_visitids)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +  # Flip coordinates for better readability
+  labs(
+    title = "NORTH - SURVEYS",
+    x = "Milkweed Species",
+    y = "Number of Visits/Surveys"
+  ) +
+  theme_minimal()
+```
+
+
+#________
+# **WEST**
+```{r}
+sites_sp_w <- df_west %>%
+  group_by(mwspecies) %>%
+  summarise(
+    unique_siteids = n_distinct(siteid),
+    unique_visitids = n_distinct(visitid),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(unique_siteids)) 
+
+print(sites_sp_w)
+```
+
+#sites
+```{r}
+ggplot(sites_sp_w, aes(x = reorder(mwspecies, unique_siteids), y = unique_siteids)) +
+  geom_bar(stat = "identity", fill = "orange") +
+  coord_flip() +  # Flip coordinates for better readability
+  labs(
+    title = "WEST - SITES",
+    x = "Milkweed Species",
+    y = "# Unique Sites"
+  ) +
+  theme_minimal()
+```
+
+#visits/surveys
+```{r}
+ggplot(sites_sp_w, aes(x = reorder(mwspecies, unique_visitids), y = unique_visitids)) +
+  geom_bar(stat = "identity", fill = "orange") +
+  coord_flip() +  # Flip coordinates for better readability
+  labs(
+    title = "WEST - SURVEYS",
+    x = "Milkweed Species",
+    y = "Number of Visits/Surveys"
+  ) +
+  theme_minimal()
+```
+
+
